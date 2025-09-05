@@ -6,12 +6,24 @@ import com.dotcms.ai.vision.workflow.OpenAIVisionAutoTagActionlet;
 import com.dotmarketing.business.APILocator;
 import com.dotmarketing.osgi.GenericBundleActivator;
 import com.dotmarketing.portlets.workflows.actionlet.WorkFlowActionlet;
+import io.vavr.Lazy;
 import java.util.List;
+import java.util.concurrent.ThreadPoolExecutor;
 import org.osgi.framework.BundleContext;
 
 public class Activator extends GenericBundleActivator {
 
     private static final OpenAIImageTaggingContentListener LISTENER = new OpenAIImageTaggingContentListener();
+
+
+    public static Lazy<ThreadPoolExecutor> AIThreadPool = Lazy.of(() ->
+            new ThreadPoolExecutor(10, 10, 60L, java.util.concurrent.TimeUnit.SECONDS,
+                    new java.util.concurrent.ArrayBlockingQueue<>(10000),
+                    new ThreadPoolExecutor.CallerRunsPolicy()));
+
+    // Register the actionlets
+
+
 
 
     private final List<WorkFlowActionlet> actionlets = List.of(
@@ -30,6 +42,7 @@ public class Activator extends GenericBundleActivator {
         subscribeEmbeddingsListener();
 
 
+
     }
 
     public void stop(BundleContext context) throws Exception {
@@ -38,7 +51,7 @@ public class Activator extends GenericBundleActivator {
 
         // unregistering the actionlets actually removes them and their config from the system
         //this.unregisterActionlets();
-
+        AIThreadPool.get().shutdown();
     }
 
     private void unsubscribeEmbeddingsListener() {

@@ -1,7 +1,10 @@
 package com.dotcms.ai.vision.listener;
 
 import com.dotcms.ai.app.AppKeys;
+import com.dotcms.ai.vision.Activator;
 import com.dotcms.ai.vision.api.AIVisionAPI;
+import com.dotcms.concurrent.DotConcurrentFactory;
+import com.dotcms.concurrent.DotSubmitter;
 import com.dotcms.content.elasticsearch.business.event.ContentletArchiveEvent;
 import com.dotcms.content.elasticsearch.business.event.ContentletDeletedEvent;
 import com.dotcms.content.elasticsearch.business.event.ContentletPublishEvent;
@@ -17,42 +20,18 @@ import com.dotmarketing.portlets.contentlet.model.ContentletListener;
 import com.dotmarketing.util.Logger;
 import com.dotmarketing.util.UtilMethods;
 import com.liferay.portal.model.User;
+import io.vavr.Lazy;
 import io.vavr.control.Try;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ThreadPoolExecutor;
 
 
 public class OpenAIImageTaggingContentListener implements ContentletListener<Contentlet> {
 
     AIVisionAPI aiVisionAPI = AIVisionAPI.instance.get();
 
-
-    boolean shouldAutoTag(Contentlet contentlet) {
-        Host host = Try.of(() -> APILocator.getHostAPI().find(contentlet.getHost(), APILocator.systemUser(), true)).getOrNull();
-        if (UtilMethods.isEmpty(() -> host.getIdentifier())) {
-            return false;
-        }
-        Optional<AppSecrets> secrets = Try.of(
-                        () -> APILocator.getAppsAPI().getSecrets(AppKeys.APP_KEY, true, host, APILocator.systemUser()))
-                .getOrElse(Optional.empty());
-
-        if (secrets.isEmpty()) {
-            return false;
-        }
-
-        List<String> contentTypes=Arrays.asList(Try.of(()->secrets.get().getSecrets().get(AIVisionAPI.AI_VISION_AUTOTAG_CONTENTTYPES_KEY).getString().toLowerCase().split("[\\s,]+")).getOrElse(new String[0]));
-
-        String contentType = contentlet.getContentType().variable().toLowerCase();
-        if(contentTypes.contains(contentType)){
-            return true;
-        }
-
-        Optional<Field> altField = contentlet.getContentType().fields().stream().filter(f -> f.fieldVariablesMap().containsKey(AIVisionAPI.AI_VISION_ALT_FIELD_VAR)).findFirst();
-        Optional<Field> tagField = contentlet.getContentType().fields().stream().filter(f -> f.fieldVariablesMap().containsKey(AIVisionAPI.AI_VISION_TAG_FIELD_VAR)).findFirst();
-        return altField.isPresent() || tagField.isPresent();
-
-    }
 
 
 
@@ -67,25 +46,42 @@ public class OpenAIImageTaggingContentListener implements ContentletListener<Con
     public void onPublish(final ContentletPublishEvent<Contentlet> contentletPublishEvent) {
 
         Contentlet contentlet = contentletPublishEvent.getContentlet();
-        if (!shouldAutoTag(contentlet)) {
+        if (!aiVisionAPI.shouldAutoTag(contentlet)) {
             return;
         }
 
+
+
+
+
         if (contentletPublishEvent.isPublish()) {
-            try {
-                LocalTransaction.wrap(() -> aiVisionAPI.tagImageIfNeeded(contentlet));
 
-                LocalTransaction.wrap(() -> {
-                   if(aiVisionAPI.addAltTextIfNeeded(contentlet)) {
-                       saveContentlet(contentlet, APILocator.systemUser());
-                   }
-                });
+            Activator.AIThreadPool.get().submit(() -> {
+                try {
+                    LocalTransaction.wrap(() -> {
+                                try {
+                                    boolean autoTagged = aiVisionAPI.tagImageIfNeeded(contentlet);
+                                    boolean autoDescription = aiVisionAPI.addAltTextIfNeeded(contentlet);
 
-            } catch (Exception e) {
-                Logger.error(this, "Error tagging contentlet", e);
-            }
+                                    if (autoTagged || autoDescription) {
+                                        saveContentlet(contentlet, APILocator.systemUser());
+                                    }
 
-            logEvent("onPublish - PublishEvent:true", contentlet);
+
+                                } catch (Throwable e) {
+                                    e.printStackTrace();
+                                    Logger.warnAndDebug(this.getClass(), e);
+                                }
+                            }
+                    );
+
+
+                } catch (Throwable e) {
+                    Logger.error(this, "Error tagging contentlet", e);
+                }
+
+                logEvent("onPublish - PublishEvent:true", contentlet);
+            });
         } else {
             logEvent("onPublish - PublishEvent:false", contentlet);
 
@@ -121,6 +117,13 @@ public class OpenAIImageTaggingContentListener implements ContentletListener<Con
         Logger.info(OpenAIImageTaggingContentListener.class,
                 "GOT " + eventType + " for content: " + contentlet.getTitle() + " id:" + contentlet.getIdentifier());
     }
+
+
+
+
+
+
+
 
 
 }

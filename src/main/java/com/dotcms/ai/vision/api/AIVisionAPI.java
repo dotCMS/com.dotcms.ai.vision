@@ -29,7 +29,6 @@ public interface AIVisionAPI {
 
     static final String AI_VISION_TAG_FIELD_VAR = "dotAITagSrc";
 
-    static final String AI_VISITON_TAG_AND_ALT_PROMPT_TEMPLATE = "AI_VISITON_TAG_AND_ALT_PROMPT_TEMPLATE";
 
     static final Lazy<AIVisionAPI> instance = Lazy.of(OpenAIVisionAPIImpl::new);
 
@@ -43,6 +42,8 @@ public interface AIVisionAPI {
 
 
     boolean addAltTextIfNeeded(Contentlet contentlet);
+
+    boolean shouldAutoTag(Contentlet contentlet);
 
     /**
      * This method takes a file and returns a Tuple2 with the first element being the description and the second element

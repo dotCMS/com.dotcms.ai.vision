@@ -10,7 +10,6 @@ import com.dotcms.contenttype.model.field.TagField;
 import com.dotcms.contenttype.model.type.DotAssetContentType;
 import com.dotcms.rendering.velocity.util.VelocityUtil;
 import com.dotcms.security.apps.AppSecrets;
-import com.dotcms.security.apps.Secret;
 import com.dotmarketing.beans.Host;
 import com.dotmarketing.business.APILocator;
 import com.dotmarketing.exception.DotRuntimeException;
@@ -31,10 +30,14 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import org.apache.velocity.context.Context;
@@ -189,6 +192,34 @@ public class OpenAIVisionAPIImpl implements AIVisionAPI {
         }
     }
 
+
+    @Override
+    public boolean shouldAutoTag(Contentlet contentlet) {
+        Host host = Try.of(() -> APILocator.getHostAPI().find(contentlet.getHost(), APILocator.systemUser(), true)).getOrNull();
+        if (UtilMethods.isEmpty(() -> host.getIdentifier())) {
+            return false;
+        }
+        Optional<AppSecrets> secrets = Try.of(
+                        () -> APILocator.getAppsAPI().getSecrets(AppKeys.APP_KEY, true, host, APILocator.systemUser()))
+                .getOrElse(Optional.empty());
+
+        if (secrets.isEmpty()) {
+            return false;
+        }
+
+        List<String> contentTypes= Arrays.asList(Try.of(()->secrets.get().getSecrets().get(AIVisionAPI.AI_VISION_AUTOTAG_CONTENTTYPES_KEY).getString().toLowerCase().split("[\\s,]+")).getOrElse(new String[0]));
+
+        String contentType = contentlet.getContentType().variable().toLowerCase();
+        if(contentTypes.contains(contentType)){
+            return true;
+        }
+
+        Optional<Field> altField = contentlet.getContentType().fields().stream().filter(f -> f.fieldVariablesMap().containsKey(AIVisionAPI.AI_VISION_ALT_FIELD_VAR)).findFirst();
+        Optional<Field> tagField = contentlet.getContentType().fields().stream().filter(f -> f.fieldVariablesMap().containsKey(AIVisionAPI.AI_VISION_TAG_FIELD_VAR)).findFirst();
+        return altField.isPresent() || tagField.isPresent();
+
+    }
+
     @Override
     public Optional<Tuple2<String, List<String>>> readImageTagsAndDescription(File imageFile) {
 
@@ -227,7 +258,7 @@ public class OpenAIVisionAPIImpl implements AIVisionAPI {
                         "OpenAI Response: " + openAIResponse.toString());
 
                 final JSONObject parsedResponse = parseAIResponse(openAIResponse);
-                Logger.debug(OpenAIImageTaggingContentListener.class.getName(),
+                Logger.info(OpenAIImageTaggingContentListener.class.getName(),
                         "parsedResponse: " + parsedResponse.toString());
 
                 return Tuple.of(parsedResponse.getString(AI_VISION_ALT_TEXT_VARIABLE),
@@ -369,12 +400,12 @@ public class OpenAIVisionAPIImpl implements AIVisionAPI {
         if (tagFieldOpt.isEmpty()) {
             return;
         }
-        Try.run(() -> APILocator.getTagAPI()
-                .addContentletTagInode(TAGGED_BY_DOTAI, contentlet.getInode(), contentlet.getHost(),
-                        tagFieldOpt.get().variable())).getOrElseThrow(
-                DotRuntimeException::new);
+        Set<String> tagsToSave=new HashSet<>(tags);
+        tagsToSave.add(TAGGED_BY_DOTAI);
+        contentlet.setStringProperty(tagFieldOpt.get().variable(),String.join(",",tagsToSave));
 
-        for (final String tag : tags) {
+
+        for (final String tag : tagsToSave) {
             Try.run(() -> APILocator.getTagAPI().addContentletTagInode(tag, contentlet.getInode(), contentlet.getHost(),
                     tagFieldOpt.get().variable())).getOrElseThrow(
                     DotRuntimeException::new);
