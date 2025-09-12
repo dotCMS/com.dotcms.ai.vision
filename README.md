@@ -1,3 +1,9 @@
+### Merged into the core as of Sept 12, 2025
+
+
+
+
+
 # OpenAI Vision/Translation Plugin
 
 ## Overview
